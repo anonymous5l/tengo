@@ -236,7 +236,7 @@ func Encode(o tengo.Object) ([]byte, error) {
 		}
 
 		b = append(b, y...)
-	case *tengo.Int:
+	case *tengo.Number:
 		b = strconv.AppendInt(b, o.Value, 10)
 	case *tengo.String:
 		// string encoding bug is fixed with newly introduced function

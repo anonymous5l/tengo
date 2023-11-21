@@ -25,7 +25,7 @@ func TestVariable(t *testing.T) {
 	vars := []VariableTest{
 		{
 			Name:        "a",
-			Value:       int64(1),
+			Value:       1,
 			ValueType:   "int",
 			IntValue:    1,
 			Int64Value:  1,
@@ -33,7 +33,7 @@ func TestVariable(t *testing.T) {
 			CharValue:   rune(1),
 			BoolValue:   true,
 			StringValue: "1",
-			Object:      &tengo.Int{Value: 1},
+			Object:      &tengo.Number{Value: 1},
 		},
 		{
 			Name:        "b",

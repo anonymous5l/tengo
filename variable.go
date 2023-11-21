@@ -37,7 +37,7 @@ func (v *Variable) ValueType() string {
 	return v.value.TypeName()
 }
 
-// Int returns int value of the variable value.
+// Number returns int value of the variable value.
 // It returns 0 if the value is not convertible to int.
 func (v *Variable) Int() int {
 	c, _ := ToInt(v.value)

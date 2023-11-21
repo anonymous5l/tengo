@@ -219,7 +219,7 @@ func (d *decodeState) literal() (tengo.Object, error) {
 			return &tengo.Float{Value: n}, nil
 		}
 		n, _ := strconv.ParseInt(string(item), 10, 64)
-		return &tengo.Int{Value: n}, nil
+		return &tengo.Number{Value: n}, nil
 	}
 }
 

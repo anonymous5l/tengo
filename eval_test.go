@@ -21,17 +21,17 @@ func TestEval(t *testing.T) {
 	}
 
 	eval(`undefined`, nil, nil)
-	eval(`1`, nil, int64(1))
-	eval(`19 + 23`, nil, int64(42))
+	eval(`1`, nil, 1)
+	eval(`19 + 23`, nil, 42)
 	eval(`"foo bar"`, nil, "foo bar")
-	eval(`[1, 2, 3][1]`, nil, int64(2))
+	eval(`[1, 2, 3][1]`, nil, 2)
 
 	eval(
 		`5 + p`,
 		map[string]interface{}{
 			"p": 7,
 		},
-		int64(12),
+		12,
 	)
 	eval(
 		`"seven is " + p`,

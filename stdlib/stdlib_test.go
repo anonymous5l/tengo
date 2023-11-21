@@ -172,9 +172,9 @@ func object(v interface{}) tengo.Object {
 	case string:
 		return &tengo.String{Value: v}
 	case int64:
-		return &tengo.Int{Value: v}
+		return &tengo.Number{Value: v}
 	case int: // for convenience
-		return &tengo.Int{Value: int64(v)}
+		return &tengo.Number{Value: int64(v)}
 	case bool:
 		if v {
 			return tengo.TrueValue
@@ -221,7 +221,7 @@ func object(v interface{}) tengo.Object {
 	case []int:
 		var objs []tengo.Object
 		for _, e := range v {
-			objs = append(objs, &tengo.Int{Value: int64(e)})
+			objs = append(objs, &tengo.Number{Value: int64(e)})
 		}
 
 		return &tengo.Array{Value: objs}

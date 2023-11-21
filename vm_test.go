@@ -2158,7 +2158,7 @@ func (o *StringCircle) String() string {
 }
 
 func (o *StringCircle) IndexGet(index tengo.Object) (tengo.Object, error) {
-	intIdx, ok := index.(*tengo.Int)
+	intIdx, ok := index.(*tengo.Number)
 	if !ok {
 		return nil, tengo.ErrInvalidIndexType
 	}
@@ -2172,7 +2172,7 @@ func (o *StringCircle) IndexGet(index tengo.Object) (tengo.Object, error) {
 }
 
 func (o *StringCircle) IndexSet(index, value tengo.Object) error {
-	intIdx, ok := index.(*tengo.Int)
+	intIdx, ok := index.(*tengo.Number)
 	if !ok {
 		return tengo.ErrInvalidIndexType
 	}
@@ -2251,7 +2251,7 @@ func (o *StringArray) TypeName() string {
 }
 
 func (o *StringArray) IndexGet(index tengo.Object) (tengo.Object, error) {
-	intIdx, ok := index.(*tengo.Int)
+	intIdx, ok := index.(*tengo.Number)
 	if ok {
 		if intIdx.Value >= 0 && intIdx.Value < int64(len(o.Value)) {
 			return &tengo.String{Value: o.Value[intIdx.Value]}, nil
@@ -2264,7 +2264,7 @@ func (o *StringArray) IndexGet(index tengo.Object) (tengo.Object, error) {
 	if ok {
 		for vidx, str := range o.Value {
 			if strIdx.Value == str {
-				return &tengo.Int{Value: int64(vidx)}, nil
+				return &tengo.Number{Value: int64(vidx)}, nil
 			}
 		}
 
@@ -2280,7 +2280,7 @@ func (o *StringArray) IndexSet(index, value tengo.Object) error {
 		return tengo.ErrInvalidIndexValueType
 	}
 
-	intIdx, ok := index.(*tengo.Int)
+	intIdx, ok := index.(*tengo.Number)
 	if ok {
 		if intIdx.Value >= 0 && intIdx.Value < int64(len(o.Value)) {
 			o.Value[intIdx.Value] = strVal
@@ -2311,7 +2311,7 @@ func (o *StringArray) Call(
 
 	for i, v := range o.Value {
 		if v == s1 {
-			return &tengo.Int{Value: int64(i)}, nil
+			return &tengo.Number{Value: int64(i)}, nil
 		}
 	}
 
@@ -2451,7 +2451,7 @@ func (i *StringArrayIterator) Next() bool {
 }
 
 func (i *StringArrayIterator) Key() tengo.Object {
-	return &tengo.Int{Value: int64(i.idx - 1)}
+	return &tengo.Number{Value: int64(i.idx - 1)}
 }
 
 func (i *StringArrayIterator) Value() tengo.Object {
@@ -2788,7 +2788,7 @@ func TestModuleBlockScopes(t *testing.T) {
 					Name: "abs",
 					Value: func(a ...tengo.Object) (tengo.Object, error) {
 						v, _ := tengo.ToInt64(a[0])
-						return &tengo.Int{Value: rand.Int63n(v)}, nil
+						return &tengo.Number{Value: rand.Int63n(v)}, nil
 					},
 				},
 			},
@@ -3908,9 +3908,9 @@ func toObject(v interface{}) tengo.Object {
 	case string:
 		return &tengo.String{Value: v}
 	case int64:
-		return &tengo.Int{Value: v}
+		return &tengo.Number{Value: v}
 	case int: // for convenience
-		return &tengo.Int{Value: int64(v)}
+		return &tengo.Number{Value: int64(v)}
 	case bool:
 		if v {
 			return tengo.TrueValue
@@ -3959,8 +3959,8 @@ func toObject(v interface{}) tengo.Object {
 
 func objectZeroCopy(o tengo.Object) tengo.Object {
 	switch o.(type) {
-	case *tengo.Int:
-		return &tengo.Int{}
+	case *tengo.Number:
+		return &tengo.Number{}
 	case *tengo.Float:
 		return &tengo.Float{}
 	case *tengo.Bool:

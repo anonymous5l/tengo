@@ -24,7 +24,7 @@ func FuncARI(fn func() int) tengo.CallableFunc {
 		if len(args) != 0 {
 			return nil, tengo.ErrWrongNumArguments
 		}
-		return &tengo.Int{Value: int64(fn())}, nil
+		return &tengo.Number{Value: int64(fn())}, nil
 	}
 }
 
@@ -35,7 +35,7 @@ func FuncARI64(fn func() int64) tengo.CallableFunc {
 		if len(args) != 0 {
 			return nil, tengo.ErrWrongNumArguments
 		}
-		return &tengo.Int{Value: fn()}, nil
+		return &tengo.Number{Value: fn()}, nil
 	}
 }
 
@@ -55,7 +55,7 @@ func FuncAI64RI64(fn func(int64) int64) tengo.CallableFunc {
 				Found:    args[0].TypeName(),
 			}
 		}
-		return &tengo.Int{Value: fn(i1)}, nil
+		return &tengo.Number{Value: fn(i1)}, nil
 	}
 }
 
@@ -198,7 +198,7 @@ func FuncARIsE(fn func() ([]int, error)) tengo.CallableFunc {
 		}
 		arr := &tengo.Array{}
 		for _, v := range res {
-			arr.Value = append(arr.Value, &tengo.Int{Value: int64(v)})
+			arr.Value = append(arr.Value, &tengo.Number{Value: int64(v)})
 		}
 		return arr, nil
 	}
@@ -222,7 +222,7 @@ func FuncAIRIs(fn func(int) []int) tengo.CallableFunc {
 		res := fn(i1)
 		arr := &tengo.Array{}
 		for _, v := range res {
-			arr.Value = append(arr.Value, &tengo.Int{Value: int64(v)})
+			arr.Value = append(arr.Value, &tengo.Number{Value: int64(v)})
 		}
 		return arr, nil
 	}
@@ -300,7 +300,7 @@ func FuncAFRI(fn func(float64) int) tengo.CallableFunc {
 				Found:    args[0].TypeName(),
 			}
 		}
-		return &tengo.Int{Value: int64(fn(f1))}, nil
+		return &tengo.Number{Value: int64(fn(f1))}, nil
 	}
 }
 
@@ -662,7 +662,7 @@ func FuncASSRI(fn func(string, string) int) tengo.CallableFunc {
 				Found:    args[0].TypeName(),
 			}
 		}
-		return &tengo.Int{Value: int64(fn(s1, s2))}, nil
+		return &tengo.Number{Value: int64(fn(s1, s2))}, nil
 	}
 }
 
@@ -922,7 +922,7 @@ func FuncAYRIE(fn func([]byte) (int, error)) tengo.CallableFunc {
 		if err != nil {
 			return wrapError(err), nil
 		}
-		return &tengo.Int{Value: int64(res)}, nil
+		return &tengo.Number{Value: int64(res)}, nil
 	}
 }
 
@@ -965,7 +965,7 @@ func FuncASRIE(fn func(string) (int, error)) tengo.CallableFunc {
 		if err != nil {
 			return wrapError(err), nil
 		}
-		return &tengo.Int{Value: int64(res)}, nil
+		return &tengo.Number{Value: int64(res)}, nil
 	}
 }
 

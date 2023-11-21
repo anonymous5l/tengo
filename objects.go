@@ -221,7 +221,7 @@ func (o *Array) Equals(x Object) bool {
 
 // IndexGet returns an element at a given index.
 func (o *Array) IndexGet(index Object) (res Object, err error) {
-	intIdx, ok := index.(*Int)
+	intIdx, ok := index.(*Number)
 	if !ok {
 		err = ErrInvalidIndexType
 		return
@@ -425,9 +425,9 @@ func (o *Bytes) Equals(x Object) bool {
 	return bytes.Equal(o.Value, t.Value)
 }
 
-// IndexGet returns an element (as Int) at a given index.
+// IndexGet returns an element (as Number) at a given index.
 func (o *Bytes) IndexGet(index Object) (res Object, err error) {
-	intIdx, ok := index.(*Int)
+	intIdx, ok := index.(*Number)
 	if !ok {
 		err = ErrInvalidIndexType
 		return
@@ -437,7 +437,7 @@ func (o *Bytes) IndexGet(index Object) (res Object, err error) {
 		res = UndefinedValue
 		return
 	}
-	res = &Int{Value: int64(o.Value[idxVal])}
+	res = &Number{Value: int64(o.Value[idxVal])}
 	return
 }
 
@@ -508,7 +508,7 @@ func (o *Char) BinaryOp(op token.Token, rhs Object) (Object, error) {
 			}
 			return FalseValue, nil
 		}
-	case *Int:
+	case *Number:
 		switch op {
 		case token.Add:
 			r := o.Value + rune(rhs.Value)
@@ -730,7 +730,7 @@ func (o *Float) BinaryOp(op token.Token, rhs Object) (Object, error) {
 			}
 			return FalseValue, nil
 		}
-	case *Int:
+	case *Number:
 		switch op {
 		case token.Add:
 			r := o.Value + float64(rhs.Value)
@@ -871,7 +871,7 @@ func (o *ImmutableArray) Equals(x Object) bool {
 
 // IndexGet returns an element at a given index.
 func (o *ImmutableArray) IndexGet(index Object) (res Object, err error) {
-	intIdx, ok := index.(*Int)
+	intIdx, ok := index.(*Number)
 	if !ok {
 		err = ErrInvalidIndexType
 		return
@@ -987,93 +987,129 @@ func (o *ImmutableMap) CanIterate() bool {
 	return true
 }
 
-// Int represents an integer value.
-type Int struct {
+type NumberType byte
+
+const (
+	NumberTypeInt NumberType = iota
+	NumberTypeUint
+	NumberTypeUint8
+	NumberTypeUint16
+	NumberTypeUint32
+	NumberTypeUint64
+	NumberTypeInt8
+	NumberTypeInt16
+	NumberTypeInt32
+	NumberTypeInt64
+)
+
+// Number represents an integer value.
+type Number struct {
 	ObjectImpl
+	Type  NumberType
 	Value int64
 }
 
-func (o *Int) String() string {
+func (o *Number) String() string {
 	return strconv.FormatInt(o.Value, 10)
 }
 
 // TypeName returns the name of the type.
-func (o *Int) TypeName() string {
+func (o *Number) TypeName() string {
+	switch o.Type {
+	case NumberTypeUint:
+		return "uint"
+	case NumberTypeUint8:
+		return "uint8"
+	case NumberTypeUint16:
+		return "uint16"
+	case NumberTypeUint32:
+		return "uint32"
+	case NumberTypeUint64:
+		return "uint64"
+	case NumberTypeInt8:
+		return "int8"
+	case NumberTypeInt16:
+		return "int16"
+	case NumberTypeInt32:
+		return "int32"
+	case NumberTypeInt64:
+		return "int64"
+	}
 	return "int"
 }
 
 // BinaryOp returns another object that is the result of a given binary
 // operator and a right-hand side object.
-func (o *Int) BinaryOp(op token.Token, rhs Object) (Object, error) {
+func (o *Number) BinaryOp(op token.Token, rhs Object) (Object, error) {
 	switch rhs := rhs.(type) {
-	case *Int:
+	case *Number:
 		switch op {
 		case token.Add:
 			r := o.Value + rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Sub:
 			r := o.Value - rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Mul:
 			r := o.Value * rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Quo:
 			r := o.Value / rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Rem:
 			r := o.Value % rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.And:
 			r := o.Value & rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Or:
 			r := o.Value | rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Xor:
 			r := o.Value ^ rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.AndNot:
 			r := o.Value &^ rhs.Value
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Shl:
 			r := o.Value << uint64(rhs.Value)
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Shr:
 			r := o.Value >> uint64(rhs.Value)
 			if r == o.Value {
 				return o, nil
 			}
-			return &Int{Value: r}, nil
+			return &Number{Value: r}, nil
 		case token.Less:
 			if o.Value < rhs.Value {
 				return TrueValue, nil
@@ -1158,19 +1194,19 @@ func (o *Int) BinaryOp(op token.Token, rhs Object) (Object, error) {
 }
 
 // Copy returns a copy of the type.
-func (o *Int) Copy() Object {
-	return &Int{Value: o.Value}
+func (o *Number) Copy() Object {
+	return &Number{Value: o.Value}
 }
 
 // IsFalsy returns true if the value of the type is falsy.
-func (o *Int) IsFalsy() bool {
+func (o *Number) IsFalsy() bool {
 	return o.Value == 0
 }
 
 // Equals returns true if the value of the type is equal to the value of
 // another object.
-func (o *Int) Equals(x Object) bool {
-	t, ok := x.(*Int)
+func (o *Number) Equals(x Object) bool {
+	t, ok := x.(*Number)
 	if !ok {
 		return false
 	}
@@ -1400,7 +1436,7 @@ func (o *String) Equals(x Object) bool {
 
 // IndexGet returns a character at a given index.
 func (o *String) IndexGet(index Object) (res Object, err error) {
-	intIdx, ok := index.(*Int)
+	intIdx, ok := index.(*Number)
 	if !ok {
 		err = ErrInvalidIndexType
 		return
@@ -1452,7 +1488,7 @@ func (o *Time) TypeName() string {
 // operator and a right-hand side object.
 func (o *Time) BinaryOp(op token.Token, rhs Object) (Object, error) {
 	switch rhs := rhs.(type) {
-	case *Int:
+	case *Number:
 		switch op {
 		case token.Add: // time + int => time
 			if rhs.Value == 0 {
@@ -1468,7 +1504,7 @@ func (o *Time) BinaryOp(op token.Token, rhs Object) (Object, error) {
 	case *Time:
 		switch op {
 		case token.Sub: // time - time => int (duration)
-			return &Int{Value: int64(o.Value.Sub(rhs.Value))}, nil
+			return &Number{Value: int64(o.Value.Sub(rhs.Value))}, nil
 		case token.Less: // time < time => bool
 			if o.Value.Before(rhs.Value) {
 				return TrueValue, nil
@@ -1609,4 +1645,8 @@ func (o *UserFunction) Call(args ...Object) (Object, error) {
 // CanCall returns whether the Object can be Called.
 func (o *UserFunction) CanCall() bool {
 	return true
+}
+
+type Struct struct {
+	ObjectImpl
 }

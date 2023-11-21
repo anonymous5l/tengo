@@ -25,20 +25,20 @@ func TestScript_Add(t *testing.T) {
 		func(args ...tengo.Object) (ret tengo.Object, err error) {
 			if len(args) > 0 {
 				switch arg := args[0].(type) {
-				case *tengo.Int:
-					return &tengo.Int{Value: arg.Value + 1}, nil
+				case *tengo.Number:
+					return &tengo.Number{Value: arg.Value + 1}, nil
 				}
 			}
 
-			return &tengo.Int{Value: 0}, nil
+			return &tengo.Number{Value: 0}, nil
 		}))
 	c, err := s.Compile()
 	require.NoError(t, err)
 	require.NoError(t, c.Run())
 	require.Equal(t, "foo", c.Get("a").Value())
 	require.Equal(t, "foo", c.Get("b").Value())
-	require.Equal(t, int64(0), c.Get("c").Value())
-	require.Equal(t, int64(6), c.Get("d").Value())
+	require.Equal(t, 0, c.Get("c").Value())
+	require.Equal(t, 6, c.Get("d").Value())
 }
 
 func TestScript_Remove(t *testing.T) {
@@ -57,7 +57,7 @@ func TestScript_Run(t *testing.T) {
 	c, err := s.Run()
 	require.NoError(t, err)
 	require.NotNil(t, c)
-	compiledGet(t, c, "a", int64(5))
+	compiledGet(t, c, "a", 5)
 }
 
 func TestScript_BuiltinModules(t *testing.T) {
@@ -178,7 +178,7 @@ e := mod1.double(s)
 				err error,
 			) {
 				arg0, _ := tengo.ToInt64(args[0])
-				ret = &tengo.Int{Value: arg0 * 2}
+				ret = &tengo.Number{Value: arg0 * 2}
 				return
 			},
 		},
@@ -252,7 +252,7 @@ func (o *Counter) BinaryOp(
 		case token.Sub:
 			return &Counter{value: o.value - rhs.value}, nil
 		}
-	case *tengo.Int:
+	case *tengo.Number:
 		switch op {
 		case token.Add:
 			return &Counter{value: o.value + rhs.Value}, nil
@@ -281,7 +281,7 @@ func (o *Counter) Copy() tengo.Object {
 }
 
 func (o *Counter) Call(_ ...tengo.Object) (tengo.Object, error) {
-	return &tengo.Int{Value: o.value}, nil
+	return &tengo.Number{Value: o.value}, nil
 }
 
 func (o *Counter) CanCall() bool {
@@ -293,7 +293,7 @@ func TestScript_CustomObjects(t *testing.T) {
 		"c1": &Counter{value: 5},
 	})
 	compiledRun(t, c)
-	compiledGet(t, c, "a", int64(5))
+	compiledGet(t, c, "a", 5)
 	compiledGet(t, c, "s", "Counter(5)")
 	compiledGetCounter(t, c, "c2", &Counter{value: 6})
 
@@ -307,7 +307,7 @@ out := c1()
 		"c1": &Counter{value: 5},
 	})
 	compiledRun(t, c)
-	compiledGet(t, c, "out", int64(15))
+	compiledGet(t, c, "out", 15)
 }
 
 func compiledGetCounter(
@@ -332,7 +332,7 @@ func TestScriptSourceModule(t *testing.T) {
 	scr.SetImports(mods)
 	c, err := scr.Run()
 	require.NoError(t, err)
-	require.Equal(t, int64(5), c.Get("out").Value())
+	require.Equal(t, 5, c.Get("out").Value())
 
 	// executing module function
 	scr = tengo.NewScript([]byte(`fn := import("mod"); out := fn()`))
@@ -342,7 +342,7 @@ func TestScriptSourceModule(t *testing.T) {
 	scr.SetImports(mods)
 	c, err = scr.Run()
 	require.NoError(t, err)
-	require.Equal(t, int64(8), c.Get("out").Value())
+	require.Equal(t, 8, c.Get("out").Value())
 
 	scr = tengo.NewScript([]byte(`out := import("mod")`))
 	mods = tengo.NewModuleMap()
@@ -402,7 +402,7 @@ func TestCompiled_Get(t *testing.T) {
 	// simple script
 	c := compile(t, `a := 5`, nil)
 	compiledRun(t, c)
-	compiledGet(t, c, "a", int64(5))
+	compiledGet(t, c, "a", 5)
 
 	// user-defined variables
 	compileError(t, `a := b`, nil)          // compile error because "b" is not defined
@@ -415,7 +415,7 @@ func TestCompiled_Get(t *testing.T) {
 func TestCompiled_GetAll(t *testing.T) {
 	c := compile(t, `a := 5`, nil)
 	compiledRun(t, c)
-	compiledGetAll(t, c, M{"a": int64(5)})
+	compiledGetAll(t, c, M{"a": 5})
 
 	c = compile(t, `a := b`, M{"b": "foo"})
 	compiledRun(t, c)
@@ -423,7 +423,7 @@ func TestCompiled_GetAll(t *testing.T) {
 
 	c = compile(t, `a := b; b = 5`, M{"b": "foo"})
 	compiledRun(t, c)
-	compiledGetAll(t, c, M{"a": "foo", "b": int64(5)})
+	compiledGetAll(t, c, M{"a": "foo", "b": 5})
 }
 
 func TestCompiled_IsDefined(t *testing.T) {
@@ -457,11 +457,11 @@ a := func() {
 	}() 
 }()`, M{"b": 5})
 	compiledRun(t, c)
-	compiledGet(t, c, "a", int64(10))
+	compiledGet(t, c, "a", 10)
 	err = c.Set("b", 10)
 	require.NoError(t, err)
 	compiledRun(t, c)
-	compiledGet(t, c, "a", int64(15))
+	compiledGet(t, c, "a", 15)
 }
 
 func TestCompiled_RunContext(t *testing.T) {
@@ -469,7 +469,7 @@ func TestCompiled_RunContext(t *testing.T) {
 	c := compile(t, `a := 5`, nil)
 	err := c.RunContext(context.Background())
 	require.NoError(t, err)
-	compiledGet(t, c, "a", int64(5))
+	compiledGet(t, c, "a", 5)
 
 	// timeout
 	c = compile(t, `for true {}`, nil)
@@ -490,7 +490,7 @@ func TestCompiled_CustomObject(t *testing.T) {
 	compiledGet(t, c, "r", true)
 }
 
-// customNumber is a user defined object that can compare to tengo.Int
+// customNumber is a user defined object that can compare to tengo.Number
 // very shitty implementation, just to test that token.Less and token.Greater in BinaryOp works
 type customNumber struct {
 	tengo.ObjectImpl
@@ -506,14 +506,14 @@ func (n *customNumber) String() string {
 }
 
 func (n *customNumber) BinaryOp(op token.Token, rhs tengo.Object) (tengo.Object, error) {
-	tengoInt, ok := rhs.(*tengo.Int)
+	tengoInt, ok := rhs.(*tengo.Number)
 	if !ok {
 		return nil, tengo.ErrInvalidOperator
 	}
 	return n.binaryOpInt(op, tengoInt)
 }
 
-func (n *customNumber) binaryOpInt(op token.Token, rhs *tengo.Int) (tengo.Object, error) {
+func (n *customNumber) binaryOpInt(op token.Token, rhs *tengo.Number) (tengo.Object, error) {
 	i := n.value
 
 	switch op {

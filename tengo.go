@@ -2,7 +2,7 @@ package tengo
 
 import (
 	"errors"
-	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 )
@@ -79,7 +79,7 @@ func ToString(o Object) (v string, ok bool) {
 // ToInt will try to convert object o to int value.
 func ToInt(o Object) (v int, ok bool) {
 	switch o := o.(type) {
-	case *Int:
+	case *Number:
 		v = int(o.Value)
 		ok = true
 	case *Float:
@@ -103,10 +103,9 @@ func ToInt(o Object) (v int, ok bool) {
 	return
 }
 
-// ToInt64 will try to convert object o to int64 value.
-func ToInt64(o Object) (v int64, ok bool) {
+func ToNumber(o Object, nt NumberType) (v int64, ok bool) {
 	switch o := o.(type) {
-	case *Int:
+	case *Number:
 		v = o.Value
 		ok = true
 	case *Float:
@@ -121,7 +120,16 @@ func ToInt64(o Object) (v int64, ok bool) {
 		}
 		ok = true
 	case *String:
-		c, err := strconv.ParseInt(o.Value, 10, 64)
+		bitSize := 64
+		switch nt {
+		case NumberTypeUint8, NumberTypeInt8:
+			bitSize = 8
+		case NumberTypeUint16, NumberTypeInt16:
+			bitSize = 16
+		case NumberTypeUint32, NumberTypeInt32:
+			bitSize = 32
+		}
+		c, err := strconv.ParseInt(o.Value, 10, bitSize)
 		if err == nil {
 			v = c
 			ok = true
@@ -130,10 +138,15 @@ func ToInt64(o Object) (v int64, ok bool) {
 	return
 }
 
+// ToInt64 will try to convert object o to int64 value.
+func ToInt64(o Object) (v int64, ok bool) {
+	return ToNumber(o, NumberTypeInt64)
+}
+
 // ToFloat64 will try to convert object o to float64 value.
 func ToFloat64(o Object) (v float64, ok bool) {
 	switch o := o.(type) {
-	case *Int:
+	case *Number:
 		v = float64(o.Value)
 		ok = true
 	case *Float:
@@ -159,7 +172,7 @@ func ToBool(o Object) (v bool, ok bool) {
 // ToRune will try to convert object o to rune value.
 func ToRune(o Object) (v rune, ok bool) {
 	switch o := o.(type) {
-	case *Int:
+	case *Number:
 		v = rune(o.Value)
 		ok = true
 	case *Char:
@@ -188,7 +201,7 @@ func ToTime(o Object) (v time.Time, ok bool) {
 	case *Time:
 		v = o.Value
 		ok = true
-	case *Int:
+	case *Number:
 		v = time.Unix(o.Value, 0)
 		ok = true
 	}
@@ -197,113 +210,83 @@ func ToTime(o Object) (v time.Time, ok bool) {
 
 // ToInterface attempts to convert an object o to an interface{} value
 func ToInterface(o Object) (res interface{}) {
-	switch o := o.(type) {
-	case *Int:
-		res = o.Value
+	var assignType reflect.Type
+	switch obj := o.(type) {
+	case *Number:
+		switch obj.Type {
+		case NumberTypeInt:
+			assignType = intType
+		case NumberTypeInt8:
+			assignType = int8Type
+		case NumberTypeInt16:
+			assignType = int16Type
+		case NumberTypeInt32:
+			assignType = int32Type
+		case NumberTypeInt64:
+			assignType = int64Type
+		case NumberTypeUint:
+			assignType = uintType
+		case NumberTypeUint8:
+			assignType = uint8Type
+		case NumberTypeUint16:
+			assignType = uint16Type
+		case NumberTypeUint32:
+			assignType = uint32Type
+		case NumberTypeUint64:
+			assignType = uint64Type
+		}
 	case *String:
-		res = o.Value
+		assignType = stringType
 	case *Float:
-		res = o.Value
+		assignType = float64Type
 	case *Bool:
-		res = o == TrueValue
+		assignType = boolType
 	case *Char:
-		res = o.Value
+		assignType = uint8Type
 	case *Bytes:
-		res = o.Value
+		assignType = bytesType
 	case *Array:
-		res = make([]interface{}, len(o.Value))
-		for i, val := range o.Value {
-			res.([]interface{})[i] = ToInterface(val)
+		arr := make([]interface{}, len(obj.Value), len(obj.Value))
+		for i, val := range obj.Value {
+			arr[i] = ToInterface(val)
 		}
+		return arr
 	case *ImmutableArray:
-		res = make([]interface{}, len(o.Value))
-		for i, val := range o.Value {
-			res.([]interface{})[i] = ToInterface(val)
+		arr := make([]interface{}, len(obj.Value), len(obj.Value))
+		for i, val := range obj.Value {
+			arr[i] = ToInterface(val)
 		}
+		return arr
 	case *Map:
-		res = make(map[string]interface{})
-		for key, v := range o.Value {
-			res.(map[string]interface{})[key] = ToInterface(v)
+		m := make(map[string]interface{})
+		for key, v := range obj.Value {
+			m[key] = ToInterface(v)
 		}
+		return m
 	case *ImmutableMap:
-		res = make(map[string]interface{})
-		for key, v := range o.Value {
-			res.(map[string]interface{})[key] = ToInterface(v)
+		m := make(map[string]interface{})
+		for key, v := range obj.Value {
+			m[key] = ToInterface(v)
 		}
+		return m
 	case *Time:
-		res = o.Value
+		return obj.Value
 	case *Error:
-		res = errors.New(o.String())
+		return errors.New(o.String())
 	case *Undefined:
-		res = nil
+		return nil
 	case Object:
 		return o
 	}
+
+	if v, err := AssignValue(assignType, o); err == nil {
+		res = v.Interface()
+	}
+
 	return
 }
 
 // FromInterface will attempt to convert an interface{} v to a Tengo Object
 func FromInterface(v interface{}) (Object, error) {
-	switch v := v.(type) {
-	case nil:
-		return UndefinedValue, nil
-	case string:
-		if len(v) > MaxStringLen {
-			return nil, ErrStringLimit
-		}
-		return &String{Value: v}, nil
-	case int64:
-		return &Int{Value: v}, nil
-	case int:
-		return &Int{Value: int64(v)}, nil
-	case bool:
-		if v {
-			return TrueValue, nil
-		}
-		return FalseValue, nil
-	case rune:
-		return &Char{Value: v}, nil
-	case byte:
-		return &Char{Value: rune(v)}, nil
-	case float64:
-		return &Float{Value: v}, nil
-	case []byte:
-		if len(v) > MaxBytesLen {
-			return nil, ErrBytesLimit
-		}
-		return &Bytes{Value: v}, nil
-	case error:
-		return &Error{Value: &String{Value: v.Error()}}, nil
-	case map[string]Object:
-		return &Map{Value: v}, nil
-	case map[string]interface{}:
-		kv := make(map[string]Object)
-		for vk, vv := range v {
-			vo, err := FromInterface(vv)
-			if err != nil {
-				return nil, err
-			}
-			kv[vk] = vo
-		}
-		return &Map{Value: kv}, nil
-	case []Object:
-		return &Array{Value: v}, nil
-	case []interface{}:
-		arr := make([]Object, len(v))
-		for i, e := range v {
-			vo, err := FromInterface(e)
-			if err != nil {
-				return nil, err
-			}
-			arr[i] = vo
-		}
-		return &Array{Value: arr}, nil
-	case time.Time:
-		return &Time{Value: v}, nil
-	case Object:
-		return v, nil
-	case CallableFunc:
-		return &UserFunction{Value: v}, nil
-	}
-	return nil, fmt.Errorf("cannot convert to object: %T", v)
+	return FromValue(reflect.ValueOf(v))
 }

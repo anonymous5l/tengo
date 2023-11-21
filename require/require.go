@@ -134,8 +134,8 @@ func Equal(
 		}
 	case []tengo.Object:
 		equalObjectSlice(t, expected, actual.([]tengo.Object), msg...)
-	case *tengo.Int:
-		Equal(t, expected.Value, actual.(*tengo.Int).Value, msg...)
+	case *tengo.Number:
+		Equal(t, expected.Value, actual.(*tengo.Number).Value, msg...)
 	case *tengo.Float:
 		Equal(t, expected.Value, actual.(*tengo.Float).Value, msg...)
 	case *tengo.String:
