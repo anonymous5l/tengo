@@ -10,7 +10,6 @@ import (
 
 var (
 	errorType       = reflect.TypeOf((*error)(nil)).Elem()
-	errorObjectType = reflect.TypeOf((*Error)(nil)).Elem()
 	objectType      = reflect.TypeOf((*Object)(nil)).Elem()
 	callableType    = reflect.TypeOf((*CallableFunc)(nil)).Elem()
 	timeType        = reflect.TypeOf((*time.Time)(nil)).Elem()
@@ -31,15 +30,7 @@ var (
 	bytesType       = reflect.TypeOf((*[]byte)(nil)).Elem()
 	interfaceType   = reflect.TypeOf((*interface{})(nil)).Elem()
 	structTypeCache sync.Map
-	excludeMethods  map[string]struct{}
 )
-
-func init() {
-	excludeMethods = make(map[string]struct{}, objectType.NumMethod())
-	for i := 0; i < objectType.NumMethod(); i++ {
-		excludeMethods[objectType.Method(i).Name] = struct{}{}
-	}
-}
 
 func smallCamelCaseName(s string) string {
 	if s[0] >= 'A' && s[0] <= 'Z' {
@@ -101,16 +92,10 @@ func getProperties(t reflect.Type) *properties {
 
 	if t.NumMethod() > 0 {
 		m.method = make(map[string]int)
-		isObject := t.Implements(objectType)
 		for i := 0; i < t.NumMethod(); i++ {
 			method := t.Method(i)
 			if !method.IsExported() {
 				continue
-			}
-			if isObject {
-				if _, ok := excludeMethods[method.Name]; ok {
-					continue
-				}
 			}
 			m.method[smallCamelCaseName(method.Name)] = method.Index
 		}
@@ -984,6 +969,10 @@ func FromStruct(v reflect.Value) (Object, error) {
 		return &Time{Value: v.Interface().(time.Time)}, nil
 	}
 
+	if rtype.Implements(objectType) {
+		return v.Interface().(Object), nil
+	}
+
 	m, err := getProperties(rtype).Instance(rtype, v)
 	if err != nil {
 		return nil, err
@@ -1009,8 +998,9 @@ func FromPointer(v reflect.Value) (Object, error) {
 	}
 
 	var (
-		into Object
-		err  error
+		into  Object
+		err   error
+		props map[string]Object
 	)
 
 	if rtype.Implements(objectType) {
@@ -1019,14 +1009,12 @@ func FromPointer(v reflect.Value) (Object, error) {
 		if into, err = FromValue(v.Elem()); err != nil {
 			return nil, err
 		}
+		if props, err = getProperties(rtype).Instance(rtype, v); err != nil {
+			return nil, err
+		}
 	}
 
-	m, err := getProperties(rtype).Instance(rtype, v)
-	if err != nil {
-		return nil, err
-	}
-
-	ptr := &reference{Object: into, props: m, rtype: rtype, value: v}
+	ptr := &reference{Object: into, props: props, rtype: rtype, value: v}
 
 	if rtype.Implements(errorType) {
 		return &Error{Value: ptr}, nil
@@ -1047,8 +1035,9 @@ func FromInterfaceValue(v reflect.Value) (Object, error) {
 	}
 
 	var (
-		into Object
-		err  error
+		into  Object
+		err   error
+		props map[string]Object
 	)
 
 	if rtype.Implements(objectType) {
@@ -1057,14 +1046,13 @@ func FromInterfaceValue(v reflect.Value) (Object, error) {
 		if into, err = FromValue(v.Elem()); err != nil {
 			return nil, err
 		}
+
+		if props, err = getProperties(rtype).Instance(rtype, v); err != nil {
+			return nil, err
+		}
 	}
 
-	var m map[string]Object
-	if m, err = getProperties(rtype).Instance(rtype, v); err != nil {
-		return nil, err
-	}
-
-	return &reference{Object: into, props: m, rtype: rtype, value: v}, nil
+	return &reference{Object: into, props: props, rtype: rtype, value: v}, nil
 }
 
 // FromValue will attempt to convert an reflect.Value v to a Tengo Object
