@@ -1,7 +1,6 @@
 package tengo
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -9,13 +8,9 @@ import (
 	"unicode"
 )
 
-type structField struct {
-	fields map[string]int
-	method map[string]int
-}
-
 var (
 	errorType       = reflect.TypeOf((*error)(nil)).Elem()
+	errorObjectType = reflect.TypeOf((*Error)(nil)).Elem()
 	objectType      = reflect.TypeOf((*Object)(nil)).Elem()
 	callableType    = reflect.TypeOf((*CallableFunc)(nil)).Elem()
 	timeType        = reflect.TypeOf((*time.Time)(nil)).Elem()
@@ -34,8 +29,17 @@ var (
 	float32Type     = reflect.TypeOf((*float32)(nil)).Elem()
 	float64Type     = reflect.TypeOf((*float64)(nil)).Elem()
 	bytesType       = reflect.TypeOf((*[]byte)(nil)).Elem()
+	interfaceType   = reflect.TypeOf((*interface{})(nil)).Elem()
 	structTypeCache sync.Map
+	excludeMethods  map[string]struct{}
 )
+
+func init() {
+	excludeMethods = make(map[string]struct{}, objectType.NumMethod())
+	for i := 0; i < objectType.NumMethod(); i++ {
+		excludeMethods[objectType.Method(i).Name] = struct{}{}
+	}
+}
 
 func smallCamelCaseName(s string) string {
 	if s[0] >= 'A' && s[0] <= 'Z' {
@@ -46,17 +50,46 @@ func smallCamelCaseName(s string) string {
 	return s
 }
 
-func structFields(t reflect.Type) *structField {
-	if m, ok := structTypeCache.Load(t); ok {
-		return m.(*structField)
+type properties struct {
+	fields map[string]int
+	method map[string]int
+}
+
+func (p *properties) Instance(rtype reflect.Type, v reflect.Value) (map[string]Object, error) {
+	if len(p.fields) < 1 && len(p.method) < 1 {
+		return nil, nil
 	}
 
-	m := &structField{
-		fields: make(map[string]int),
-		method: make(map[string]int),
+	m := make(map[string]Object, len(p.fields)+len(p.method))
+
+	for key, index := range p.fields {
+		fieldObject, err := FromValue(v.Field(index))
+		if err != nil {
+			return nil, err
+		}
+		m[key] = fieldObject
 	}
+
+	for key, index := range p.method {
+		methodObject, err := FromFunc(rtype.Method(index).Name, v.Method(index))
+		if err != nil {
+			return nil, err
+		}
+		m[key] = methodObject
+	}
+
+	return m, nil
+}
+
+func getProperties(t reflect.Type) *properties {
+	if m, ok := structTypeCache.Load(t); ok {
+		return m.(*properties)
+	}
+
+	m := &properties{}
 
 	if t.Kind() == reflect.Struct {
+		m.fields = make(map[string]int)
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
 			if !field.IsExported() {
@@ -66,205 +99,337 @@ func structFields(t reflect.Type) *structField {
 		}
 	}
 
-	for i := 0; i < t.NumMethod(); i++ {
-		method := t.Method(i)
-		if !method.IsExported() {
-			continue
+	if t.NumMethod() > 0 {
+		m.method = make(map[string]int)
+		isObject := t.Implements(objectType)
+		for i := 0; i < t.NumMethod(); i++ {
+			method := t.Method(i)
+			if !method.IsExported() {
+				continue
+			}
+			if isObject {
+				if _, ok := excludeMethods[method.Name]; ok {
+					continue
+				}
+			}
+			m.method[smallCamelCaseName(method.Name)] = method.Index
 		}
-		m.method[smallCamelCaseName(method.Name)] = method.Index
 	}
 
 	structTypeCache.Store(t, m)
-
 	return m
 }
 
-func AssignBool(rtype reflect.Type, o Object) (reflect.Value, bool) {
-	if rtype.Kind() != reflect.Bool {
-		return reflect.Value{}, false
+func assignError(t, e string) error {
+	if e == "" {
+		e = "unrecognized"
 	}
+	return fmt.Errorf("cannot assign to %s: %s", t, e)
+}
+
+func convertError(t, e string) error {
+	if e == "" {
+		e = "unrecognized"
+	}
+	return fmt.Errorf("cannot convert to %s: %s", t, e)
+}
+
+func isNil(o Object) bool {
+	if o == nil || o == UndefinedValue {
+		return true
+	}
+	return false
+}
+
+func AssignBool(rtype reflect.Type, o Object) (reflect.Value, error) {
+	if rtype.Kind() != reflect.Bool {
+		return reflect.Value{}, assignError("bool", rtype.Kind().String())
+	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
 	if b, ok := ToBool(o); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetBool(b)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+
+	return reflect.Value{}, assignError("bool", "")
 }
 
-func AssignString(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignString(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.String {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("string", rtype.Kind().String())
 	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
 	if s, ok := ToString(o); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetString(s)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("string", "")
 }
 
-func AssignInt(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignInt(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Int {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("int", rtype.Kind().String())
 	}
-	if i, ok := ToNumber(o, NumberTypeInt); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if i, ok := ToNumber(o, Int); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetInt(i)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("int", "")
 }
 
-func AssignInt8(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignInt8(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Int8 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("int8", rtype.Kind().String())
 	}
-	if i, ok := ToNumber(o, NumberTypeInt8); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if i, ok := ToNumber(o, Int8); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetInt(i)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("int8", "")
 }
 
-func AssignInt16(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignInt16(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Int16 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("int16", rtype.Kind().String())
 	}
-	if i, ok := ToNumber(o, NumberTypeInt16); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if i, ok := ToNumber(o, Int16); ok {
 		v := reflect.New(int16Type).Elem()
 		v.SetInt(i)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("int16", "")
 }
 
-func AssignInt32(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignInt32(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Int32 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("int32", rtype.Kind().String())
 	}
-	if i, ok := ToNumber(o, NumberTypeInt32); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if i, ok := ToNumber(o, Int32); ok {
 		v := reflect.New(int32Type).Elem()
 		v.SetInt(i)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("int32", "")
 }
 
-func AssignInt64(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignInt64(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Int64 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("int64", rtype.Kind().String())
 	}
-	if i, ok := ToNumber(o, NumberTypeInt64); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if i, ok := ToNumber(o, Int64); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetInt(i)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("int64", "")
 }
 
-func AssignUint(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignUint(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Uint {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("uint", rtype.Kind().String())
 	}
-	if u, ok := ToNumber(o, NumberTypeUint); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if u, ok := ToNumber(o, Uint); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetUint(uint64(u))
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("uint", "")
 }
 
-func AssignUint8(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignUint8(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Uint8 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("uint8", rtype.Kind().String())
 	}
-	if u, ok := ToNumber(o, NumberTypeUint8); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if u, ok := ToNumber(o, Uint8); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetUint(uint64(u))
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("uint8", "")
 }
 
-func AssignUint16(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignUint16(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Uint16 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("uint16", rtype.Kind().String())
 	}
-	if u, ok := ToNumber(o, NumberTypeUint16); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if u, ok := ToNumber(o, Uint16); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetUint(uint64(u))
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("uint16", "")
 }
 
-func AssignUint32(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignUint32(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Uint32 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("uint32", rtype.Kind().String())
 	}
-	if u, ok := ToNumber(o, NumberTypeUint32); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if u, ok := ToNumber(o, Uint32); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetUint(uint64(u))
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("uint32", "")
 }
 
-func AssignUint64(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignUint64(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Uint64 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("uint64", rtype.Kind().String())
 	}
-	if u, ok := ToNumber(o, NumberTypeUint64); ok {
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if u, ok := ToNumber(o, Uint64); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetUint(uint64(u))
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("uint64", "")
 }
 
-func AssignFloat32(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignFloat32(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Float32 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("float32", rtype.Kind().String())
 	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
 	if f, ok := ToFloat64(o); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetFloat(f)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("float32", "")
 }
 
-func AssignFloat64(rtype reflect.Type, o Object) (reflect.Value, bool) {
+func AssignFloat64(rtype reflect.Type, o Object) (reflect.Value, error) {
 	if rtype.Kind() != reflect.Float64 {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("float64", rtype.Kind().String())
 	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
 	if f, ok := ToFloat64(o); ok {
 		v := reflect.New(rtype).Elem()
 		v.SetFloat(f)
-		return v, true
+		return v, nil
 	}
-	return reflect.Value{}, false
+	return reflect.Value{}, assignError("float64", "")
 }
 
-func AssignArray(t reflect.Type, o Object) (reflect.Value, bool) {
-	switch t.Kind() {
-	case reflect.Array, reflect.Slice:
+func AssignArray(rtype reflect.Type, o Object) (reflect.Value, error) {
+	var name string
+	switch rtype.Kind() {
+	case reflect.Array:
+		name = "array"
+	case reflect.Slice:
+		name = "slice"
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError(name, rtype.Kind().String())
 	}
 
-	sliceElemType := t.Elem()
-	if sliceElemType.Kind() == reflect.Uint8 {
-		if bytes, ok := o.(*Bytes); ok {
-			b := bytes.Value
-			count := len(b)
-			v := reflect.MakeSlice(t, count, count)
-			for i := 0; i < count; i++ {
-				v.Index(i).Set(reflect.ValueOf(b[i]))
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	compareArrayLen := func(len int) error {
+		if rtype.Kind() == reflect.Array {
+			if rtype.Len() != len {
+				return assignError(name, "len overflow")
 			}
-			return v, true
 		}
+		return nil
+	}
+
+	sliceElemType := rtype.Elem()
+	if sliceElemType.Kind() == reflect.Uint8 && sliceElemType == uint8Type {
+		if bytes, ok := o.(*Bytes); ok {
+			if bytesType == rtype {
+				return reflect.ValueOf(bytes.Value), nil
+			}
+
+			valueLen := len(bytes.Value)
+			if err := compareArrayLen(valueLen); err != nil {
+				return reflect.Value{}, err
+			}
+
+			v := reflect.MakeSlice(rtype, valueLen, valueLen)
+			for i := 0; i < valueLen; i++ {
+				v.Index(i).Set(reflect.ValueOf(bytes.Value[i]))
+			}
+			return v, nil
+		}
+	}
+
+	if ref, ok := o.(Reference); ok {
+		refType := ref.RefType()
+		if refType.AssignableTo(rtype) {
+			return ref.RefValue(), nil
+		}
+		o = ref.Into()
 	}
 
 	var objs []Object
@@ -275,65 +440,100 @@ func AssignArray(t reflect.Type, o Object) (reflect.Value, bool) {
 	case *Array:
 		objs = arr.Value
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError(name, "")
 	}
 
 	count := len(objs)
 
-	if count < 1 {
-		return reflect.Zero(t), true
+	if err := compareArrayLen(count); err != nil {
+		return reflect.Value{}, err
 	}
 
-	v := reflect.MakeSlice(t, count, count)
+	if count < 1 {
+		return reflect.Zero(rtype), nil
+	}
+
+	v := reflect.MakeSlice(rtype, count, count)
 	for i := 0; i < count; i++ {
 		if elem, err := AssignValue(sliceElemType, objs[i]); err != nil {
-			return reflect.Value{}, false
+			return reflect.Value{}, err
 		} else {
 			v.Index(i).Set(elem)
 		}
 	}
 
-	return v, true
+	return v, nil
 }
 
-func AssignInterface(t reflect.Type, o Object) (reflect.Value, bool) {
-	switch t.Kind() {
+func AssignInterface(rtype reflect.Type, o Object) (reflect.Value, error) {
+	switch rtype.Kind() {
 	case reflect.Interface:
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("interface", rtype.Kind().String())
 	}
 
-	if t.Implements(objectType) {
-		return reflect.ValueOf(o.Copy()), true
-	}
-	if t.Implements(errorType) {
-		return reflect.ValueOf(errors.New(o.String())), true
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
 	}
 
-	return reflect.Value{}, false
+	if ref, ok := o.(Reference); ok {
+		refType := ref.RefType()
+		if refType.AssignableTo(rtype) {
+			return ref.RefValue(), nil
+		}
+		return AssignInterface(rtype, ref.Into())
+	}
+
+	return reflect.Value{}, assignError("interface", "")
 }
 
-func AssignPointer(t reflect.Type, o Object) (reflect.Value, bool) {
-	switch t.Kind() {
+func AssignPointer(rtype reflect.Type, o Object) (reflect.Value, error) {
+	switch rtype.Kind() {
 	case reflect.Pointer:
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("pointer", rtype.Kind().String())
 	}
 
-	if v, err := AssignValue(t.Elem(), o); err != nil {
-		return reflect.Value{}, false
-	} else {
-		i := reflect.New(t)
-		i.Elem().Set(v)
-		return i, true
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
 	}
+
+	if ref, ok := o.(Reference); ok {
+		refType := ref.RefType()
+		if refType.AssignableTo(rtype) {
+			return ref.RefValue(), nil
+		}
+		return AssignPointer(rtype, ref.Into())
+	}
+
+	v, err := AssignValue(rtype.Elem(), o)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+
+	i := reflect.New(rtype).Elem()
+	i.Set(v)
+
+	return i, nil
 }
 
-func AssignMap(t reflect.Type, o Object) (reflect.Value, bool) {
-	switch t.Kind() {
+func AssignMap(rtype reflect.Type, o Object) (reflect.Value, error) {
+	switch rtype.Kind() {
 	case reflect.Map:
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("map", rtype.Kind().String())
+	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if ref, ok := o.(Reference); ok {
+		refType := ref.RefType()
+		if refType.AssignableTo(rtype) {
+			return ref.RefValue(), nil
+		}
+		return AssignMap(rtype, ref.Into())
 	}
 
 	var m map[string]Object
@@ -344,152 +544,137 @@ func AssignMap(t reflect.Type, o Object) (reflect.Value, bool) {
 	case *Map:
 		m = mObj.Value
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("map", "")
 	}
 
-	kType, vType := t.Key(), t.Elem()
+	kType, vType := rtype.Key(), rtype.Elem()
 
 	if kType.Kind() != reflect.String {
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("map", "")
 	}
 
-	v := reflect.MakeMapWithSize(t, len(m))
+	v := reflect.MakeMapWithSize(rtype, len(m))
 	for key, value := range m {
-		if vObj, err := AssignValue(vType, value); err != nil {
-			return reflect.Value{}, false
-		} else {
-			v.SetMapIndex(reflect.ValueOf(key), vObj)
+		vObj, err := AssignValue(vType, value)
+		if err != nil {
+			return reflect.Value{}, err
 		}
+		v.SetMapIndex(reflect.ValueOf(key), vObj)
 	}
 
-	return v, true
+	return v, nil
 }
 
-func AssignStruct(t reflect.Type, o Object) (reflect.Value, bool) {
-	switch t.Kind() {
+func AssignStruct(rtype reflect.Type, o Object) (reflect.Value, error) {
+	switch rtype.Kind() {
 	case reflect.Struct:
 	default:
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("struct", rtype.Kind().String())
 	}
 
-	if objErr, ok := o.(*Error); ok {
-		o = objErr.Value
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
 	}
 
 	var objFields map[string]Object
 
 	switch obj := o.(type) {
+	case *Error:
+		return AssignValue(rtype, obj.Value)
 	case *Time:
-		if t.AssignableTo(timeType) {
-			timeValue := reflect.New(t).Elem()
+		if rtype.AssignableTo(timeType) {
+			timeValue := reflect.New(rtype).Elem()
 			timeValue.Set(reflect.ValueOf(obj.Value))
-			return timeValue, true
+			return timeValue, nil
 		}
-		return reflect.Value{}, false
+		return reflect.Value{}, assignError("time.Time", "")
 	case *ImmutableMap:
 		objFields = obj.Value
 	case *Map:
 		objFields = obj.Value
 	}
 
-	sFields := structFields(t)
+	sFields := getProperties(rtype)
 
-	v := reflect.New(t).Elem()
-
+	v := reflect.New(rtype).Elem()
 	for key, value := range objFields {
 		if index, ok := sFields.fields[key]; ok {
 			field := v.Field(index)
 			fieldValue, err := AssignValue(field.Type(), value)
 			if err != nil {
-				return reflect.Value{}, false
+				return reflect.Value{}, err
 			}
 			field.Set(fieldValue)
 		}
 	}
 
-	return v, true
+	return v, nil
+}
+
+func AssignFunc(rtype reflect.Type, o Object) (reflect.Value, error) {
+	switch rtype.Kind() {
+	case reflect.Func:
+	default:
+		return reflect.Value{}, assignError("func", rtype.Kind().String())
+	}
+
+	if isNil(o) {
+		return reflect.Zero(rtype), nil
+	}
+
+	if ref, ok := o.(Reference); ok {
+		refType := ref.RefType()
+		if refType.AssignableTo(rtype) {
+			return ref.RefValue(), nil
+		}
+		return AssignFunc(rtype, ref.Into())
+	}
+
+	return reflect.Value{}, assignError("func", "")
 }
 
 func AssignValue(rtype reflect.Type, o Object) (reflect.Value, error) {
 	switch rtype.Kind() {
 	case reflect.Bool:
-		if v, ok := AssignBool(rtype, o); ok {
-			return v, nil
-		}
+		return AssignBool(rtype, o)
 	case reflect.Int:
-		if v, ok := AssignInt(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInt(rtype, o)
 	case reflect.Int8:
-		if v, ok := AssignInt8(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInt8(rtype, o)
 	case reflect.Int16:
-		if v, ok := AssignInt16(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInt16(rtype, o)
 	case reflect.Int32:
-		if v, ok := AssignInt32(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInt32(rtype, o)
 	case reflect.Int64:
-		if v, ok := AssignInt64(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInt64(rtype, o)
 	case reflect.Uint:
-		if v, ok := AssignUint(rtype, o); ok {
-			return v, nil
-		}
+		return AssignUint(rtype, o)
 	case reflect.Uint8:
-		if v, ok := AssignUint8(rtype, o); ok {
-			return v, nil
-		}
+		return AssignUint8(rtype, o)
 	case reflect.Uint16:
-		if v, ok := AssignUint16(rtype, o); ok {
-			return v, nil
-		}
+		return AssignUint16(rtype, o)
 	case reflect.Uint32:
-		if v, ok := AssignUint32(rtype, o); ok {
-			return v, nil
-		}
+		return AssignUint32(rtype, o)
 	case reflect.Uint64:
-		if v, ok := AssignUint64(rtype, o); ok {
-			return v, nil
-		}
+		return AssignUint64(rtype, o)
 	case reflect.Float32:
-		if v, ok := AssignFloat32(rtype, o); ok {
-			return v, nil
-		}
+		return AssignFloat32(rtype, o)
 	case reflect.Float64:
-		if v, ok := AssignFloat64(rtype, o); ok {
-			return v, nil
-		}
+		return AssignFloat64(rtype, o)
 	case reflect.String:
-		if v, ok := AssignString(rtype, o); ok {
-			return v, nil
-		}
+		return AssignString(rtype, o)
 	case reflect.Array, reflect.Slice:
-		if v, ok := AssignArray(rtype, o); ok {
-			return v, nil
-		}
+		return AssignArray(rtype, o)
 	case reflect.Func:
-		// not supported for now
+		return AssignFunc(rtype, o)
 	case reflect.Interface:
-		if v, ok := AssignInterface(rtype, o); ok {
-			return v, nil
-		}
+		return AssignInterface(rtype, o)
 	case reflect.Pointer:
-		if v, ok := AssignPointer(rtype, o); ok {
-			return v, nil
-		}
+		return AssignPointer(rtype, o)
 	case reflect.Map:
-		if v, ok := AssignMap(rtype, o); ok {
-			return v, nil
-		}
+		return AssignMap(rtype, o)
 	case reflect.Struct:
-		if v, ok := AssignStruct(rtype, o); ok {
-			return v, nil
-		}
+		return AssignStruct(rtype, o)
 	}
 
 	return reflect.Value{}, fmt.Errorf("cannot assign to type: %s -> %s",
@@ -497,353 +682,389 @@ func AssignValue(rtype reflect.Type, o Object) (reflect.Value, error) {
 		rtype.Kind().String())
 }
 
-func FromUintBool(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Bool {
-		return nil, fmt.Errorf("cannot convert to bool: %s", kind.String())
-	}
-	if v.Bool() {
-		return TrueValue, nil
-	}
-	return FalseValue, nil
-}
+func fromRefValue(typeName string,
+	expectType reflect.Type,
+	v reflect.Value,
+	convertFunc func(rtype reflect.Type, v reflect.Value) (Object, error)) (Object, error) {
 
-func FromValueInt(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Int {
-		return nil, fmt.Errorf("cannot convert to int: %s", kind.String())
-	}
-	return &Number{Value: v.Int(), Type: NumberTypeInt}, nil
-}
-
-func FromValueInt8(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Int8 {
-		return nil, fmt.Errorf("cannot convert to int8: %s", kind.String())
-	}
-	return &Number{Value: v.Int(), Type: NumberTypeInt8}, nil
-}
-
-func FromValueInt16(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Int16 {
-		return nil, fmt.Errorf("cannot convert to int16: %s", kind.String())
-	}
-	return &Number{Value: v.Int(), Type: NumberTypeInt16}, nil
-}
-
-func FromValueInt32(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Int32 {
-		return nil, fmt.Errorf("cannot convert to int32: %s", kind.String())
-	}
-	return &Number{Value: v.Int(), Type: NumberTypeInt32}, nil
-}
-
-func FromValueInt64(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Int64 {
-		return nil, fmt.Errorf("cannot convert to int64: %s", kind.String())
-	}
-	return &Number{Value: v.Int(), Type: NumberTypeInt64}, nil
-}
-
-func FromValueUint(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Uint {
-		return nil, fmt.Errorf("cannot convert to uint: %s", kind.String())
-	}
-	return &Number{Value: int64(v.Uint()), Type: NumberTypeUint}, nil
-}
-
-func FromValueUint8(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Uint8 {
-		return nil, fmt.Errorf("cannot convert to uint8: %s", kind.String())
-	}
-	return &Number{Value: int64(v.Uint()), Type: NumberTypeUint8}, nil
-}
-
-func FromValueUint16(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Uint16 {
-		return nil, fmt.Errorf("cannot convert to uint16: %s", kind.String())
-	}
-	return &Number{Value: int64(v.Uint()), Type: NumberTypeUint16}, nil
-}
-
-func FromValueUint32(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Uint32 {
-		return nil, fmt.Errorf("cannot convert to uint32: %s", kind.String())
-	}
-	return &Number{Value: int64(v.Uint()), Type: NumberTypeUint32}, nil
-}
-
-func FromValueUint64(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Uint64 {
-		return nil, fmt.Errorf("cannot convert to uint64: %s", kind.String())
-	}
-	return &Number{Value: int64(v.Uint()), Type: NumberTypeUint64}, nil
-}
-
-func FromValueFloat32(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Float32 {
-		return nil, fmt.Errorf("cannot convert to float32: %s", kind.String())
-	}
-	return &Float{Value: v.Float()}, nil
-}
-
-func FromValueFloat64(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Float64 {
-		return nil, fmt.Errorf("cannot convert to float64: %s", kind.String())
-	}
-	return &Float{Value: v.Float()}, nil
-}
-
-func FromValueString(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.String {
-		return nil, fmt.Errorf("cannot convert to string: %s", kind.String())
-	}
-	str := v.String()
-	if len(str) > MaxStringLen {
-		return nil, ErrStringLimit
-	}
-	return &String{Value: str}, nil
-}
-
-func FromValueFunc(name string, v reflect.Value) (Object, error) {
 	rtype := v.Type()
 
-	if rtype.Kind() != reflect.Func || v.IsNil() {
-		return nil, fmt.Errorf("cannot convert to CallableFunc: %s", rtype.Kind().String())
+	if expectType != nil {
+		if rtype.Kind() != expectType.Kind() {
+			return nil, convertError(typeName, rtype.Kind().String())
+		}
 	}
-
-	if rtype.AssignableTo(callableType) {
-		return &UserFunction{Name: name, Value: v.Interface().(CallableFunc)}, nil
-	}
-
-	return &UserFunction{
-		Name: name,
-		Value: func(args ...Object) (ret Object, err error) {
-			isVariadic := rtype.IsVariadic()
-
-			numIn, numOut := rtype.NumIn(), rtype.NumOut()
-
-			var in, out []reflect.Value
-
-			var argValue reflect.Value
-
-			for i := 0; i < numIn; i++ {
-				assignType := rtype.In(i)
-
-				if isVariadic && i+1 >= numIn {
-					if len(args) < numIn {
-						in = append(in, reflect.Zero(assignType))
-						break
-					}
-
-					arrType := assignType.Elem()
-					variadicValue := reflect.MakeSlice(assignType, len(args)-i, len(args)-i)
-					for x := i; x < len(args); x++ {
-						if argValue, err = AssignValue(arrType, args[x]); err != nil {
-							return
-						}
-						variadicValue.Index(x - i).Set(argValue)
-					}
-					in = append(in, variadicValue)
-				} else {
-					if len(args) < i+1 {
-						return nil, ErrWrongNumArguments
-					}
-
-					if argValue, err = AssignValue(assignType, args[i]); err != nil {
-						return
-					}
-					in = append(in, argValue)
-				}
-			}
-
-			if !isVariadic {
-				out = v.Call(in)
-			} else {
-				out = v.CallSlice(in)
-			}
-
-			if numOut < 1 {
-				return
-			}
-
-			if rtype.Out(numOut - 1).Implements(errorType) {
-				outErr := out[numOut-1]
-				if outErr.IsValid() && !outErr.IsNil() &&
-					outErr.Type().Implements(errorType) {
-					return nil, outErr.Interface().(error)
-				}
-				numOut = numOut - 1
-			}
-
-			var (
-				obj  Object
-				objs []Object
-			)
-
-			for i := 0; i < numOut; i++ {
-				if obj, err = FromValue(out[i]); err != nil {
-					return
-				}
-				objs = append(objs, obj)
-			}
-
-			if numOut > 1 {
-				return &ImmutableArray{Value: objs}, nil
-			}
-
-			return obj, nil
-		},
-	}, nil
-}
-
-func FromValueArray(v reflect.Value) (Object, error) {
-	rtype := v.Type()
 
 	switch rtype.Kind() {
-	case reflect.Array, reflect.Slice:
-	default:
-		return nil, fmt.Errorf("cannot convert to Array: %s", rtype.Kind().String())
-	}
-
-	if rtype.Elem().AssignableTo(uint8Type) {
-		bytes := v.Interface().([]byte)
-		if len(bytes) > MaxBytesLen {
-			return nil, ErrBytesLimit
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.UnsafePointer:
+		if v.IsNil() {
+			return UndefinedValue, nil
 		}
-		return &Bytes{Value: bytes}, nil
 	}
 
-	var arr []Object
-	for i := 0; i < v.Len(); i++ {
-		obj, err := FromValue(v.Index(i))
-		if err != nil {
-			return nil, err
-		}
-		arr = append(arr, obj)
-	}
-	return &Array{Value: arr}, nil
-}
-
-func FromValueMap(v reflect.Value) (Object, error) {
-	rtype := v.Type()
-
-	if rtype.Kind() != reflect.Map {
-		return nil, fmt.Errorf("cannot convert to Map: %s", rtype.Kind().String())
-	}
-
-	keyType := rtype.Key()
-
-	if keyType.Kind() != reflect.String {
-		return nil, fmt.Errorf("cannot convert map key to string: %s", keyType.String())
-	}
-
-	m := make(map[string]Object)
-	iter := v.MapRange()
-	for iter.Next() {
-		iterValue, err := FromValue(iter.Value())
-		if err != nil {
-			return nil, err
-		}
-		m[iter.Key().String()] = iterValue
-	}
-
-	return &Map{Value: m}, nil
-}
-
-func FromValueStruct(v reflect.Value) (Object, error) {
-	rtype := v.Type()
-
-	if rtype.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("cannot convert to Struct: %s", rtype.Kind().String())
-	}
-
-	if rtype.AssignableTo(timeType) {
-		return &Time{Value: v.Interface().(time.Time)}, nil
-	}
-
-	m := make(map[string]Object)
-
-	setFields := func(v reflect.Value, rtype reflect.Type) error {
-		sFields := structFields(rtype)
-
-		for key, index := range sFields.fields {
-			o, err := FromValue(v.Field(index))
-			if err != nil {
-				return err
-			}
-			m[key] = o
-		}
-
-		for key, index := range sFields.method {
-			methodName := rtype.Method(index).Name
-			o, err := FromValueFunc(methodName, v.Method(index))
-			if err != nil {
-				return err
-			}
-			m[key] = o
-		}
-
-		return nil
-	}
-
-	if err := setFields(v, rtype); err != nil {
+	into, err := convertFunc(rtype, v)
+	if err != nil {
 		return nil, err
 	}
 
-	if v.CanAddr() {
-		vPtr := v.Addr()
-		if err := setFields(vPtr, vPtr.Type()); err != nil {
-			return nil, err
+	if expectType != nil {
+		if rtype == expectType {
+			return into, nil
 		}
 	}
 
-	return &Map{Value: m}, nil
-}
-
-func fromValueOrPointer(v reflect.Value) (Object, error) {
-	if v.IsNil() {
-		return UndefinedValue, nil
+	props, err := getProperties(rtype).Instance(rtype, v)
+	if err != nil {
+		return nil, err
 	}
 
+	return &reference{Object: into, props: props, rtype: rtype, value: v}, nil
+}
+
+func FromBool(v reflect.Value) (Object, error) {
+	return fromRefValue("bool", boolType, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			if v.Bool() {
+				return TrueValue, nil
+			}
+			return FalseValue, nil
+		})
+}
+
+func FromInt(v reflect.Value) (Object, error) {
+	return fromRefValue("int", intType, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: v.Int(), Type: Int}, nil
+		})
+}
+
+func FromInt8(v reflect.Value) (Object, error) {
+	return fromRefValue("int8", int8Type, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: v.Int(), Type: Int8}, nil
+		})
+}
+
+func FromInt16(v reflect.Value) (Object, error) {
+	return fromRefValue("int16", int16Type, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: v.Int(), Type: Int16}, nil
+		})
+}
+
+func FromInt32(v reflect.Value) (Object, error) {
+	return fromRefValue("int32", int32Type, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: v.Int(), Type: Int32}, nil
+		})
+}
+
+func FromInt64(v reflect.Value) (Object, error) {
+	return fromRefValue("int64", int64Type, v,
+		func(p reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: v.Int(), Type: Int64}, nil
+		})
+}
+
+func FromUint(v reflect.Value) (Object, error) {
+	return fromRefValue("uint", uintType, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: int64(v.Uint()), Type: Uint}, nil
+		})
+}
+
+func FromUint8(v reflect.Value) (Object, error) {
+	return fromRefValue("uint8", uint8Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: int64(v.Uint()), Type: Uint8}, nil
+		})
+}
+
+func FromUint16(v reflect.Value) (Object, error) {
+	return fromRefValue("uint16", uint16Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: int64(v.Uint()), Type: Uint16}, nil
+		})
+}
+
+func FromUint32(v reflect.Value) (Object, error) {
+	return fromRefValue("uint32", uint32Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: int64(v.Uint()), Type: Uint32}, nil
+		})
+}
+
+func FromUint64(v reflect.Value) (Object, error) {
+	return fromRefValue("uint64", uint64Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Number{Value: int64(v.Uint()), Type: Uint64}, nil
+		})
+}
+
+func FromFloat32(v reflect.Value) (Object, error) {
+	return fromRefValue("float32", float32Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Float{Value: v.Float(), Type: Float32}, nil
+		})
+}
+
+func FromFloat64(v reflect.Value) (Object, error) {
+	return fromRefValue("float64", float64Type, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			return &Float{Value: v.Float(), Type: Float64}, nil
+		})
+}
+
+func FromString(v reflect.Value) (Object, error) {
+	return fromRefValue("string", stringType, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			str := v.String()
+			if len(str) > MaxStringLen {
+				return nil, ErrStringLimit
+			}
+			return &String{Value: str}, nil
+		})
+}
+
+func FromFunc(name string, v reflect.Value) (Object, error) {
+	return fromRefValue("func", callableType, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			if rtype == callableType {
+				return &UserFunction{Name: name, Value: v.Interface().(CallableFunc)}, nil
+			}
+			bridgeFunc := func(args ...Object) (ret Object, err error) {
+				isVariadic := rtype.IsVariadic()
+
+				numIn, numOut := rtype.NumIn(), rtype.NumOut()
+
+				var in, out []reflect.Value
+
+				var argValue reflect.Value
+
+				for i := 0; i < numIn; i++ {
+					assignType := rtype.In(i)
+
+					if isVariadic && i+1 >= numIn {
+						if len(args) < numIn {
+							in = append(in, reflect.Zero(assignType))
+							break
+						}
+
+						arrType := assignType.Elem()
+						variadicValue := reflect.MakeSlice(assignType, len(args)-i, len(args)-i)
+						for x := i; x < len(args); x++ {
+							if argValue, err = AssignValue(arrType, args[x]); err != nil {
+								return
+							}
+							variadicValue.Index(x - i).Set(argValue)
+						}
+						in = append(in, variadicValue)
+					} else {
+						if len(args) < i+1 {
+							return nil, ErrWrongNumArguments
+						}
+
+						if argValue, err = AssignValue(assignType, args[i]); err != nil {
+							return
+						}
+						in = append(in, argValue)
+					}
+				}
+
+				if !isVariadic {
+					out = v.Call(in)
+				} else {
+					out = v.CallSlice(in)
+				}
+
+				if numOut < 1 {
+					return
+				}
+
+				if rtype.Out(numOut - 1).Implements(errorType) {
+					outErr := out[numOut-1]
+					if outErr.IsValid() && !outErr.IsNil() &&
+						outErr.Type().Implements(errorType) {
+						return nil, outErr.Interface().(error)
+					}
+					numOut = numOut - 1
+				}
+
+				var (
+					obj  Object
+					objs []Object
+				)
+
+				for i := 0; i < numOut; i++ {
+					if obj, err = FromValue(out[i]); err != nil {
+						return
+					}
+					objs = append(objs, obj)
+				}
+
+				if numOut > 1 {
+					return &ImmutableArray{Value: objs}, nil
+				}
+
+				return obj, nil
+			}
+			return &UserFunction{Name: name, Value: bridgeFunc}, nil
+		})
+}
+
+func FromArray(v reflect.Value) (Object, error) {
+	return fromRefValue("array", nil, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			switch rtype.Kind() {
+			case reflect.Array, reflect.Slice:
+			default:
+				return nil, fmt.Errorf("cannot convert to array: %s", rtype.Kind().String())
+			}
+
+			if rtype == bytesType {
+				bytes := v.Interface().([]byte)
+				if len(bytes) > MaxBytesLen {
+					return nil, ErrBytesLimit
+				}
+				return &Bytes{Value: bytes}, nil
+			}
+
+			var arr []Object
+			for i := 0; i < v.Len(); i++ {
+				obj, err := FromValue(v.Index(i))
+				if err != nil {
+					return nil, err
+				}
+				arr = append(arr, obj)
+			}
+
+			return &Array{Value: arr}, nil
+		})
+}
+
+func FromMap(v reflect.Value) (Object, error) {
+	return fromRefValue("map", nil, v,
+		func(rtype reflect.Type, v reflect.Value) (Object, error) {
+			switch rtype.Kind() {
+			case reflect.Map:
+			default:
+				return nil, fmt.Errorf("cannot convert to map: %s", rtype.Kind().String())
+			}
+
+			keyType := rtype.Key()
+
+			if keyType.Kind() != reflect.String {
+				return nil, fmt.Errorf("cannot convert map key to string: %s", keyType.String())
+			}
+
+			m := make(map[string]Object)
+			iter := v.MapRange()
+			for iter.Next() {
+				iterValue, err := FromValue(iter.Value())
+				if err != nil {
+					return nil, err
+				}
+				m[iter.Key().String()] = iterValue
+			}
+
+			return &Map{Value: m}, nil
+		})
+}
+
+func FromStruct(v reflect.Value) (Object, error) {
 	rtype := v.Type()
 
+	switch rtype.Kind() {
+	case reflect.Struct:
+	default:
+		return nil, fmt.Errorf("cannot convert to struct: %s", rtype.Kind().String())
+	}
+
+	if rtype == timeType {
+		return &Time{Value: v.Interface().(time.Time)}, nil
+	}
+
+	m, err := getProperties(rtype).Instance(rtype, v)
+	if err != nil {
+		return nil, err
+	}
+
+	into := &ImmutableMap{Value: m}
+
 	if rtype.Implements(errorType) {
-		return &Error{Value: &String{Value: errorType.(error).Error()}}, nil
+		return &Error{Value: into}, nil
 	}
 
-	if rtype.Implements(objectType) {
-		return v.Interface().(Object), nil
-	}
-
-	return FromValue(v.Elem())
+	return into, nil
 }
 
-func FromValuePointer(v reflect.Value) (Object, error) {
+func FromPointer(v reflect.Value) (Object, error) {
 	rtype := v.Type()
 	if v.Kind() != reflect.Pointer {
 		return nil, fmt.Errorf("cannot convert to pointer: *%s", rtype.Elem().Name())
 	}
-	return fromValueOrPointer(v)
+
+	if v.IsNil() {
+		return UndefinedValue, nil
+	}
+
+	var (
+		into Object
+		err  error
+	)
+
+	if rtype.Implements(objectType) {
+		into = v.Interface().(Object)
+	} else {
+		if into, err = FromValue(v.Elem()); err != nil {
+			return nil, err
+		}
+	}
+
+	m, err := getProperties(rtype).Instance(rtype, v)
+	if err != nil {
+		return nil, err
+	}
+
+	ptr := &reference{Object: into, props: m, rtype: rtype, value: v}
+
+	if rtype.Implements(errorType) {
+		return &Error{Value: ptr}, nil
+	}
+
+	return ptr, nil
 }
 
-func FromValueInterface(v reflect.Value) (Object, error) {
-	kind := v.Kind()
-	if kind != reflect.Interface {
-		return nil, fmt.Errorf("cannot convert to interface: %s", kind.String())
+func FromInterfaceValue(v reflect.Value) (Object, error) {
+	rtype := v.Type()
+
+	if rtype.Kind() != reflect.Interface {
+		return nil, fmt.Errorf("cannot convert to interface: %s", rtype.Kind().String())
 	}
-	return fromValueOrPointer(v)
+
+	if v.IsNil() {
+		return UndefinedValue, nil
+	}
+
+	var (
+		into Object
+		err  error
+	)
+
+	if rtype.Implements(objectType) {
+		into = v.Interface().(Object)
+	} else if rtype == interfaceType {
+		if into, err = FromValue(v.Elem()); err != nil {
+			return nil, err
+		}
+	}
+
+	var m map[string]Object
+	if m, err = getProperties(rtype).Instance(rtype, v); err != nil {
+		return nil, err
+	}
+
+	return &reference{Object: into, props: m, rtype: rtype, value: v}, nil
 }
 
 // FromValue will attempt to convert an reflect.Value v to a Tengo Object
@@ -857,50 +1078,93 @@ func FromValue(v reflect.Value) (Object, error) {
 		}
 	}
 
-	rtype := v.Type()
-	kind := rtype.Kind()
-	switch kind {
+	switch v.Kind() {
 	case reflect.Bool:
-		return FromUintBool(v)
+		return FromBool(v)
 	case reflect.Int:
-		return FromValueInt(v)
+		return FromInt(v)
 	case reflect.Int8:
-		return FromValueInt8(v)
+		return FromInt8(v)
 	case reflect.Int16:
-		return FromValueInt16(v)
+		return FromInt16(v)
 	case reflect.Int32:
-		return FromValueInt32(v)
+		return FromInt32(v)
 	case reflect.Int64:
-		return FromValueInt64(v)
+		return FromInt64(v)
 	case reflect.Uint:
-		return FromValueUint(v)
+		return FromUint(v)
 	case reflect.Uint8:
-		return FromValueUint8(v)
+		return FromUint8(v)
 	case reflect.Uint16:
-		return FromValueUint16(v)
+		return FromUint16(v)
 	case reflect.Uint32:
-		return FromValueUint32(v)
+		return FromUint32(v)
 	case reflect.Uint64:
-		return FromValueUint64(v)
+		return FromUint64(v)
 	case reflect.Float32:
-		return FromValueFloat32(v)
+		return FromFloat32(v)
 	case reflect.Float64:
-		return FromValueFloat64(v)
-	case reflect.Array, reflect.Slice:
-		return FromValueArray(v)
-	case reflect.Func:
-		return FromValueFunc("", v)
-	case reflect.Interface:
-		return FromValueInterface(v)
-	case reflect.Pointer:
-		return FromValuePointer(v)
-	case reflect.Map:
-		return FromValueMap(v)
+		return FromFloat64(v)
 	case reflect.String:
-		return FromValueString(v)
+		return FromString(v)
+	case reflect.Array, reflect.Slice:
+		return FromArray(v)
+	case reflect.Func:
+		return FromFunc("", v)
+	case reflect.Interface:
+		return FromInterfaceValue(v)
+	case reflect.Pointer:
+		return FromPointer(v)
 	case reflect.Struct:
-		return FromValueStruct(v)
+		return FromStruct(v)
+	case reflect.Map:
+		return FromMap(v)
 	}
 
-	return nil, fmt.Errorf("cannot convert to Object: %s", kind.String())
+	return nil, fmt.Errorf("cannot convert to Object: %s", v.Kind().String())
+}
+
+type Reference interface {
+	Into() Object
+	RefType() reflect.Type
+	RefValue() reflect.Value
+}
+
+type reference struct {
+	Object
+	props map[string]Object
+	rtype reflect.Type
+	value reflect.Value
+}
+
+func (o *reference) Equals(x Object) bool {
+	if r, ok := x.(*reference); ok {
+		if r.rtype.AssignableTo(o.rtype) {
+			return r.value.Equal(o.value)
+		}
+	}
+	return o.Object.Equals(x)
+}
+
+func (o *reference) IndexGet(index Object) (value Object, err error) {
+	if o.props != nil {
+		if str, ok := index.(*String); ok {
+			if value, ok = o.props[str.Value]; ok {
+				return
+			}
+		}
+	}
+	return o.Object.IndexGet(index)
+}
+
+func (o *reference) RefType() reflect.Type {
+	return o.rtype
+}
+
+func (o *reference) RefValue() reflect.Value {
+	return o.value
+}
+
+func (o *reference) Into() Object {
+	return o.Object
 }

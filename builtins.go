@@ -27,43 +27,43 @@ var builtinFuncs = []*BuiltinFunction{
 	},
 	{
 		Name:  "int",
-		Value: builtinNumber(NumberTypeInt),
+		Value: builtinNumber(Int),
 	},
 	{
 		Name:  "uint",
-		Value: builtinNumber(NumberTypeUint),
+		Value: builtinNumber(Uint),
 	},
 	{
 		Name:  "uint8",
-		Value: builtinNumber(NumberTypeUint8),
+		Value: builtinNumber(Uint8),
 	},
 	{
 		Name:  "uint16",
-		Value: builtinNumber(NumberTypeUint16),
+		Value: builtinNumber(Uint16),
 	},
 	{
 		Name:  "uint32",
-		Value: builtinNumber(NumberTypeUint32),
+		Value: builtinNumber(Uint32),
 	},
 	{
 		Name:  "uint64",
-		Value: builtinNumber(NumberTypeUint64),
+		Value: builtinNumber(Uint64),
 	},
 	{
 		Name:  "int8",
-		Value: builtinNumber(NumberTypeInt8),
+		Value: builtinNumber(Int8),
 	},
 	{
 		Name:  "int16",
-		Value: builtinNumber(NumberTypeInt8),
+		Value: builtinNumber(Int16),
 	},
 	{
 		Name:  "int32",
-		Value: builtinNumber(NumberTypeInt8),
+		Value: builtinNumber(Int32),
 	},
 	{
 		Name:  "int64",
-		Value: builtinNumber(NumberTypeInt8),
+		Value: builtinNumber(Int64),
 	},
 	{
 		Name:  "bool",
@@ -71,7 +71,15 @@ var builtinFuncs = []*BuiltinFunction{
 	},
 	{
 		Name:  "float",
-		Value: builtinFloat,
+		Value: builtinFloat(Float64),
+	},
+	{
+		Name:  "float32",
+		Value: builtinFloat(Float32),
+	},
+	{
+		Name:  "float64",
+		Value: builtinFloat(Float64),
 	},
 	{
 		Name:  "char",
@@ -87,47 +95,55 @@ var builtinFuncs = []*BuiltinFunction{
 	},
 	{
 		Name:  "is_int",
-		Value: builtinIsNumber(NumberTypeInt),
+		Value: builtinIsNumber(Int),
 	},
 	{
 		Name:  "is_uint",
-		Value: builtinIsNumber(NumberTypeUint),
+		Value: builtinIsNumber(Uint),
 	},
 	{
 		Name:  "is_uint8",
-		Value: builtinIsNumber(NumberTypeUint8),
+		Value: builtinIsNumber(Uint8),
 	},
 	{
 		Name:  "is_uint16",
-		Value: builtinIsNumber(NumberTypeUint16),
+		Value: builtinIsNumber(Uint16),
 	},
 	{
 		Name:  "is_uint32",
-		Value: builtinIsNumber(NumberTypeUint32),
+		Value: builtinIsNumber(Uint32),
 	},
 	{
 		Name:  "is_uint64",
-		Value: builtinIsNumber(NumberTypeUint64),
+		Value: builtinIsNumber(Uint64),
 	},
 	{
 		Name:  "is_int8",
-		Value: builtinIsNumber(NumberTypeInt8),
+		Value: builtinIsNumber(Int8),
 	},
 	{
 		Name:  "is_int16",
-		Value: builtinIsNumber(NumberTypeInt16),
+		Value: builtinIsNumber(Int16),
 	},
 	{
 		Name:  "is_int32",
-		Value: builtinIsNumber(NumberTypeInt32),
+		Value: builtinIsNumber(Int32),
 	},
 	{
 		Name:  "is_int64",
-		Value: builtinIsNumber(NumberTypeInt64),
+		Value: builtinIsNumber(Int64),
 	},
 	{
 		Name:  "is_float",
-		Value: builtinIsFloat,
+		Value: builtinIsFloat(Float64),
+	},
+	{
+		Name:  "is_float32",
+		Value: builtinIsFloat(Float32),
+	},
+	{
+		Name:  "is_float64",
+		Value: builtinIsFloat(Float64),
 	},
 	{
 		Name:  "is_string",
@@ -230,20 +246,23 @@ func builtinIsNumber(nt NumberType) CallableFunc {
 			if n.Type == nt {
 				return TrueValue, nil
 			}
-			return FalseValue, nil
 		}
 		return FalseValue, nil
 	}
 }
 
-func builtinIsFloat(args ...Object) (Object, error) {
-	if len(args) != 1 {
-		return nil, ErrWrongNumArguments
+func builtinIsFloat(ft FloatType) CallableFunc {
+	return func(args ...Object) (ret Object, err error) {
+		if len(args) != 1 {
+			return nil, ErrWrongNumArguments
+		}
+		if f, ok := args[0].(*Float); ok {
+			if f.Type == ft {
+				return TrueValue, nil
+			}
+		}
+		return FalseValue, nil
 	}
-	if _, ok := args[0].(*Float); ok {
-		return TrueValue, nil
-	}
-	return FalseValue, nil
 }
 
 func builtinIsBool(args ...Object) (Object, error) {
@@ -541,22 +560,24 @@ func builtinNumber(nt NumberType) CallableFunc {
 	}
 }
 
-func builtinFloat(args ...Object) (Object, error) {
-	argsLen := len(args)
-	if !(argsLen == 1 || argsLen == 2) {
-		return nil, ErrWrongNumArguments
+func builtinFloat(ft FloatType) CallableFunc {
+	return func(args ...Object) (ret Object, err error) {
+		argsLen := len(args)
+		if !(argsLen == 1 || argsLen == 2) {
+			return nil, ErrWrongNumArguments
+		}
+		if _, ok := args[0].(*Float); ok {
+			return args[0], nil
+		}
+		v, ok := ToFloat(args[0], ft)
+		if ok {
+			return &Float{Value: v}, nil
+		}
+		if argsLen == 2 {
+			return args[1], nil
+		}
+		return UndefinedValue, nil
 	}
-	if _, ok := args[0].(*Float); ok {
-		return args[0], nil
-	}
-	v, ok := ToFloat64(args[0])
-	if ok {
-		return &Float{Value: v}, nil
-	}
-	if argsLen == 2 {
-		return args[1], nil
-	}
-	return UndefinedValue, nil
 }
 
 func builtinBool(args ...Object) (Object, error) {

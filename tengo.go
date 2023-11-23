@@ -68,9 +68,12 @@ func ToString(o Object) (v string, ok bool) {
 		return
 	}
 	ok = true
-	if str, isStr := o.(*String); isStr {
-		v = str.Value
-	} else {
+	switch o := o.(type) {
+	case *reference:
+		return ToString(o.Into())
+	case *String:
+		v = o.Value
+	default:
 		v = o.String()
 	}
 	return
@@ -79,6 +82,8 @@ func ToString(o Object) (v string, ok bool) {
 // ToInt will try to convert object o to int value.
 func ToInt(o Object) (v int, ok bool) {
 	switch o := o.(type) {
+	case *reference:
+		return ToInt(o.Into())
 	case *Number:
 		v = int(o.Value)
 		ok = true
@@ -105,6 +110,8 @@ func ToInt(o Object) (v int, ok bool) {
 
 func ToNumber(o Object, nt NumberType) (v int64, ok bool) {
 	switch o := o.(type) {
+	case *reference:
+		return ToNumber(o.Into(), nt)
 	case *Number:
 		v = o.Value
 		ok = true
@@ -122,11 +129,11 @@ func ToNumber(o Object, nt NumberType) (v int64, ok bool) {
 	case *String:
 		bitSize := 64
 		switch nt {
-		case NumberTypeUint8, NumberTypeInt8:
+		case Uint8, Int8:
 			bitSize = 8
-		case NumberTypeUint16, NumberTypeInt16:
+		case Uint16, Int16:
 			bitSize = 16
-		case NumberTypeUint32, NumberTypeInt32:
+		case Uint32, Int32:
 			bitSize = 32
 		}
 		c, err := strconv.ParseInt(o.Value, 10, bitSize)
@@ -140,12 +147,13 @@ func ToNumber(o Object, nt NumberType) (v int64, ok bool) {
 
 // ToInt64 will try to convert object o to int64 value.
 func ToInt64(o Object) (v int64, ok bool) {
-	return ToNumber(o, NumberTypeInt64)
+	return ToNumber(o, Int64)
 }
 
-// ToFloat64 will try to convert object o to float64 value.
-func ToFloat64(o Object) (v float64, ok bool) {
+func ToFloat(o Object, ft FloatType) (v float64, ok bool) {
 	switch o := o.(type) {
+	case *reference:
+		return ToFloat(o.Into(), ft)
 	case *Number:
 		v = float64(o.Value)
 		ok = true
@@ -153,13 +161,23 @@ func ToFloat64(o Object) (v float64, ok bool) {
 		v = o.Value
 		ok = true
 	case *String:
-		c, err := strconv.ParseFloat(o.Value, 64)
+		bitSize := 64
+		switch ft {
+		case Float32:
+			bitSize = 32
+		}
+		c, err := strconv.ParseFloat(o.Value, bitSize)
 		if err == nil {
 			v = c
 			ok = true
 		}
 	}
 	return
+}
+
+// ToFloat64 will try to convert object o to float64 value.
+func ToFloat64(o Object) (v float64, ok bool) {
+	return ToFloat(o, Float64)
 }
 
 // ToBool will try to convert object o to bool value.
@@ -172,6 +190,8 @@ func ToBool(o Object) (v bool, ok bool) {
 // ToRune will try to convert object o to rune value.
 func ToRune(o Object) (v rune, ok bool) {
 	switch o := o.(type) {
+	case *reference:
+		return ToRune(o.Into())
 	case *Number:
 		v = rune(o.Value)
 		ok = true
@@ -214,31 +234,36 @@ func ToInterface(o Object) (res interface{}) {
 	switch obj := o.(type) {
 	case *Number:
 		switch obj.Type {
-		case NumberTypeInt:
+		case Int:
 			assignType = intType
-		case NumberTypeInt8:
+		case Int8:
 			assignType = int8Type
-		case NumberTypeInt16:
+		case Int16:
 			assignType = int16Type
-		case NumberTypeInt32:
+		case Int32:
 			assignType = int32Type
-		case NumberTypeInt64:
+		case Int64:
 			assignType = int64Type
-		case NumberTypeUint:
+		case Uint:
 			assignType = uintType
-		case NumberTypeUint8:
+		case Uint8:
 			assignType = uint8Type
-		case NumberTypeUint16:
+		case Uint16:
 			assignType = uint16Type
-		case NumberTypeUint32:
+		case Uint32:
 			assignType = uint32Type
-		case NumberTypeUint64:
+		case Uint64:
 			assignType = uint64Type
 		}
 	case *String:
 		assignType = stringType
 	case *Float:
-		assignType = float64Type
+		switch obj.Type {
+		case Float64:
+			assignType = float64Type
+		case Float32:
+			assignType = float32Type
+		}
 	case *Bool:
 		assignType = boolType
 	case *Char:
@@ -279,8 +304,10 @@ func ToInterface(o Object) (res interface{}) {
 		return o
 	}
 
-	if v, err := AssignValue(assignType, o); err == nil {
-		res = v.Interface()
+	if assignType.Kind() != reflect.Invalid {
+		if v, err := AssignValue(assignType, o); err == nil {
+			res = v.Interface()
+		}
 	}
 
 	return

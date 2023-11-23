@@ -75,29 +75,41 @@ func (v *Variable) Bool() bool {
 // Array returns []interface value of the variable value. It returns 0 if the
 // value is not convertible to []interface.
 func (v *Variable) Array() []interface{} {
-	switch val := v.value.(type) {
-	case *Array:
-		var arr []interface{}
-		for _, e := range val.Value {
-			arr = append(arr, ToInterface(e))
+	var toArray func(value Object) []interface{}
+	toArray = func(value Object) []interface{} {
+		switch val := value.(type) {
+		case *reference:
+			return toArray(val.Into())
+		case *Array:
+			var arr []interface{}
+			for _, e := range val.Value {
+				arr = append(arr, ToInterface(e))
+			}
+			return arr
 		}
-		return arr
+		return nil
 	}
-	return nil
+	return toArray(v.value)
 }
 
 // Map returns map[string]interface{} value of the variable value. It returns
 // 0 if the value is not convertible to map[string]interface{}.
 func (v *Variable) Map() map[string]interface{} {
-	switch val := v.value.(type) {
-	case *Map:
-		kv := make(map[string]interface{})
-		for mk, mv := range val.Value {
-			kv[mk] = ToInterface(mv)
+	var toMap func(value Object) map[string]interface{}
+	toMap = func(value Object) map[string]interface{} {
+		switch val := value.(type) {
+		case *reference:
+			return toMap(val.Into())
+		case *Map:
+			kv := make(map[string]interface{})
+			for mk, mv := range val.Value {
+				kv[mk] = ToInterface(mv)
+			}
+			return kv
 		}
-		return kv
+		return nil
 	}
-	return nil
+	return toMap(v.value)
 }
 
 // String returns string value of the variable value. It returns 0 if the value

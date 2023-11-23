@@ -664,9 +664,17 @@ func (o *Error) IndexGet(index Object) (res Object, err error) {
 	return
 }
 
+type FloatType byte
+
+const (
+	Float64 FloatType = iota
+	Float32
+)
+
 // Float represents a floating point number value.
 type Float struct {
 	ObjectImpl
+	Type  FloatType
 	Value float64
 }
 
@@ -990,16 +998,16 @@ func (o *ImmutableMap) CanIterate() bool {
 type NumberType byte
 
 const (
-	NumberTypeInt NumberType = iota
-	NumberTypeUint
-	NumberTypeUint8
-	NumberTypeUint16
-	NumberTypeUint32
-	NumberTypeUint64
-	NumberTypeInt8
-	NumberTypeInt16
-	NumberTypeInt32
-	NumberTypeInt64
+	Int NumberType = iota
+	Uint
+	Uint8
+	Uint16
+	Uint32
+	Uint64
+	Int8
+	Int16
+	Int32
+	Int64
 )
 
 // Number represents an integer value.
@@ -1016,26 +1024,28 @@ func (o *Number) String() string {
 // TypeName returns the name of the type.
 func (o *Number) TypeName() string {
 	switch o.Type {
-	case NumberTypeUint:
+	case Int:
+		return "int"
+	case Uint:
 		return "uint"
-	case NumberTypeUint8:
+	case Uint8:
 		return "uint8"
-	case NumberTypeUint16:
+	case Uint16:
 		return "uint16"
-	case NumberTypeUint32:
+	case Uint32:
 		return "uint32"
-	case NumberTypeUint64:
+	case Uint64:
 		return "uint64"
-	case NumberTypeInt8:
+	case Int8:
 		return "int8"
-	case NumberTypeInt16:
+	case Int16:
 		return "int16"
-	case NumberTypeInt32:
+	case Int32:
 		return "int32"
-	case NumberTypeInt64:
+	case Int64:
 		return "int64"
 	}
-	return "int"
+	return "unknown"
 }
 
 // BinaryOp returns another object that is the result of a given binary
