@@ -414,6 +414,9 @@ func builtinLen(args ...Object) (Object, error) {
 		return &Number{Value: int64(len(arg.Value))}, nil
 	case *ImmutableMap:
 		return &Number{Value: int64(len(arg.Value))}, nil
+	case *reference:
+		args[0] = arg.Into()
+		return builtinLen(args...)
 	default:
 		return nil, ErrInvalidArgumentType{
 			Name:     "first",

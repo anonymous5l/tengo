@@ -115,6 +115,22 @@ func (b *Bytecode) RemoveDuplicates() {
 				indexMap[curIdx] = newIdx
 				deduped = append(deduped, c)
 			}
+		case *reference:
+			modName, ok := c.props["__module_name__"]
+			if !ok {
+				break
+			}
+			strModName := modName.(*String).Value
+
+			newIdx, ok := immutableMaps[strModName]
+			if strModName != "" && ok {
+				indexMap[curIdx] = newIdx
+			} else {
+				newIdx = len(deduped)
+				immutableMaps[strModName] = newIdx
+				indexMap[curIdx] = newIdx
+				deduped = append(deduped, c)
+			}
 		case *ImmutableMap:
 			modName := inferModuleName(c)
 			newIdx, ok := immutableMaps[modName]

@@ -469,6 +469,13 @@ func AssignInterface(rtype reflect.Type, o Object) (reflect.Value, error) {
 		return AssignInterface(rtype, ref.Into())
 	}
 
+	if rtype.Implements(objectType) {
+		objValue := reflect.ValueOf(o)
+		if rtype.AssignableTo(objValue.Type()) {
+			return objValue, nil
+		}
+	}
+
 	return reflect.Value{}, assignError("interface", "")
 }
 
@@ -489,6 +496,13 @@ func AssignPointer(rtype reflect.Type, o Object) (reflect.Value, error) {
 			return ref.RefValue(), nil
 		}
 		return AssignPointer(rtype, ref.Into())
+	}
+
+	if rtype.Implements(objectType) {
+		objValue := reflect.ValueOf(o)
+		if rtype.AssignableTo(objValue.Type()) {
+			return objValue, nil
+		}
 	}
 
 	v, err := AssignValue(rtype.Elem(), o)
@@ -881,7 +895,8 @@ func FromFunc(name string, v reflect.Value) (Object, error) {
 				)
 
 				for i := 0; i < numOut; i++ {
-					if obj, err = FromValue(out[i]); err != nil {
+					o := out[i]
+					if obj, err = FromValue(o); err != nil {
 						return
 					}
 					objs = append(objs, obj)
@@ -1005,6 +1020,9 @@ func FromPointer(v reflect.Value) (Object, error) {
 
 	if rtype.Implements(objectType) {
 		into = v.Interface().(Object)
+		if into == UndefinedValue {
+			return into, nil
+		}
 	} else {
 		if into, err = FromValue(v.Elem()); err != nil {
 			return nil, err
@@ -1042,11 +1060,14 @@ func FromInterfaceValue(v reflect.Value) (Object, error) {
 
 	if rtype.Implements(objectType) {
 		into = v.Interface().(Object)
+		if into == UndefinedValue {
+			return into, nil
+		}
 	} else if rtype == interfaceType {
 		if into, err = FromValue(v.Elem()); err != nil {
 			return nil, err
 		}
-
+	} else {
 		if props, err = getProperties(rtype).Instance(rtype, v); err != nil {
 			return nil, err
 		}
@@ -1142,7 +1163,18 @@ func (o *reference) IndexGet(index Object) (value Object, err error) {
 			}
 		}
 	}
-	return o.Object.IndexGet(index)
+	if o.Object != nil {
+		return o.Object.IndexGet(index)
+	}
+	return UndefinedValue, nil
+}
+
+func (o *reference) Import(moduleName string) (interface{}, error) {
+	if o.props == nil {
+		o.props = make(map[string]Object)
+	}
+	o.props["__module_name__"] = &String{Value: moduleName}
+	return o, nil
 }
 
 func (o *reference) RefType() reflect.Type {
